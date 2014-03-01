@@ -7,6 +7,7 @@ import java.util.UUID
 trait StripeSuite extends ShouldMatchers {
   //set the stripe API key
   apiKey = "tGN0bIwXnHdwOa85VABjPdSn8nWY7G7I"
+  apiVersion = Some("2014-01-31")
 
   val DefaultCardMap = Map(
     "name" -> "Scala User",
@@ -141,13 +142,13 @@ class PlanSuite extends FunSuite with StripeSuite {
   test("Customers can be created with a plan") {
     val plan = Plan.create(getUniquePlanMap)
     val customer = Customer.create(DefaultCustomerMap + ("plan" -> plan.id))
-    customer.subscription.get.plan.id should equal (plan.id)
+    customer.subscriptions.data.head.plan.id should equal (plan.id)
   }
 
   test("A plan can be added to a customer without a plan") {
     val customer = Customer.create(DefaultCustomerMap)
     val plan = Plan.create(getUniquePlanMap)
-    val subscription = customer.updateSubscription(Map("plan" -> plan.id))
+    val subscription = customer.createSubscription(Map("plan" -> plan.id))
     subscription.customer should equal (customer.id)
     subscription.plan.id should equal (plan.id)
   }
@@ -155,18 +156,22 @@ class PlanSuite extends FunSuite with StripeSuite {
   test("A customer's existing plan can be replaced") {
     val origPlan = Plan.create(getUniquePlanMap)
     val customer = Customer.create(DefaultCustomerMap + ("plan" -> origPlan.id))
-    customer.subscription.get.plan.id should equal (origPlan.id)
+    customer.subscriptions.data.head.plan.id should equal (origPlan.id)
+
+    val existingSubscriptionId = customer.subscriptions.data.head.id
     val newPlan = Plan.create(getUniquePlanMap)
-    val subscription = customer.updateSubscription(Map("plan" -> newPlan.id))
+    val subscription = customer.updateSubscription(existingSubscriptionId, Map("plan" -> newPlan.id))
     val updatedCustomer = Customer.retrieve(customer.id)
-    updatedCustomer.subscription.get.plan.id should equal (newPlan.id)
+    updatedCustomer.subscriptions.data.head.plan.id should equal (newPlan.id)
   }
 
   test("Customer subscriptions can be canceled") {
     val plan = Plan.create(getUniquePlanMap)
     val customer = Customer.create(DefaultCustomerMap + ("plan" -> plan.id))
-    customer.subscription.get.status should equal ("active")
-    val canceledSubscription = customer.cancelSubscription()
+    customer.subscriptions.data.head.status should equal ("active")
+    val existingSubscriptionId = customer.subscriptions.data.head.id
+
+    val canceledSubscription = customer.cancelSubscription(existingSubscriptionId)
     canceledSubscription.status should be ("canceled")
   }
 }
@@ -234,8 +239,9 @@ class InvoiceSuite extends FunSuite with StripeSuite {
     val invoices = Invoice.all(Map("customer" -> customer.id)).data
     val invoice = invoices.head
     invoice.customer should equal (customer.id)
-    val invoiceLineSubscription = invoice.lines.subscriptions.head
-    invoiceLineSubscription.plan.id should equal (plan.id)
+
+    val invoiceLinePlan = invoice.lines.data.head.plan.get
+    invoiceLinePlan.id should equal (plan.id)
   }
 
   test("Upcoming Invoices can be retrieved") {
@@ -301,7 +307,7 @@ class AccountSuite extends FunSuite with StripeSuite {
     account.chargeEnabled should equal (false)
     account.detailsSubmitted should be (false)
     account.statementDescriptor should be (None)
-    account.currenciesSupported.length should be (1)
-    account.currenciesSupported.head should be ("USD")
+    account.currenciesSupported.length should be (139)
+    account.currenciesSupported should contain ("usd")
   }
 }
