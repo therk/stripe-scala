@@ -467,6 +467,7 @@ case class Coupon(
   percentOff: Int,
   livemode: Boolean,
   duration: String,
+  valid: Boolean,
   redeemBy: Option[Long],
   maxRedemptions: Option[Int],
   timesRedeemed: Option[Int],
