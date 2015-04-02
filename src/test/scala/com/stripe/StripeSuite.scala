@@ -18,7 +18,7 @@ trait StripeSuite extends ShouldMatchers {
     "address_country" -> "USA",
     "number" -> "4242424242424242",
     "exp_month" -> 3,
-    "exp_year" -> 2015)
+    "exp_year" -> 2050)
 
   val DefaultChargeMap = Map("amount" -> 100, "currency" -> "usd", "card" -> DefaultCardMap)
 
@@ -307,7 +307,7 @@ class AccountSuite extends FunSuite with StripeSuite {
     account.chargeEnabled should equal (false)
     account.detailsSubmitted should be (false)
     account.statementDescriptor should be (None)
-    account.currenciesSupported.length should be (139)
+    account.currenciesSupported.length should be (138)
     account.currenciesSupported should contain ("usd")
   }
 }
