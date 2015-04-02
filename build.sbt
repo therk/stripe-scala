@@ -4,14 +4,14 @@ version := io.Source.fromFile("VERSION").mkString.trim
 
 organization := "com.stripe"
 
-scalaVersion := "2.10.3"
+scalaVersion := "2.11.6"
 
 scalacOptions ++= Seq("-unchecked", "-deprecation")
 
 libraryDependencies ++= Seq(
   "org.apache.httpcomponents" % "httpclient" % "[4.1, 4.2)",
-  "net.liftweb" %% "lift-json" % "2.5.1",
-  "org.scalatest" %% "scalatest" % "2.0.RC2" % "test"
+  "net.liftweb" %% "lift-json" % "2.6.2",
+  "org.scalatest" %% "scalatest" % "2.2.4"
 )
 
 
