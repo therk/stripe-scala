@@ -72,17 +72,11 @@ abstract class APIResource {
       "publisher" -> "stripe"
     )
 
-    val defaultHeaders = {
-      val baseHeaders = List(
-        new BasicHeader("X-Stripe-Client-User-Agent", json.compact(json.render(fullPropMap))),
-        new BasicHeader("User-Agent", "Stripe/v1 ScalaBindings/%s".format(BindingsVersion)),
-        new BasicHeader("Authorization", "Bearer %s".format(apiKey))
-      )
-
-      val apiVersionHeader = apiVersion.map(new BasicHeader("Stripe-Version", _)).toList
-
-      asJavaCollection(baseHeaders ++ apiVersionHeader)
-    }
+    val defaultHeaders = asJavaCollection(List(
+      new BasicHeader("X-Stripe-Client-User-Agent", json.compact(json.render(fullPropMap))),
+      new BasicHeader("User-Agent", "Stripe/v1 ScalaBindings/%s".format(BindingsVersion)),
+      new BasicHeader("Authorization", "Bearer %s".format(apiKey))
+    ))
 
     val httpParams = new SyncBasicHttpParams().
       setParameter(ClientPNames.DEFAULT_HEADERS, defaultHeaders).
@@ -140,15 +134,65 @@ abstract class APIResource {
 
   val CamelCaseRegex = new Regex("(_.)")
 
-  def interpretResponse(rBody: String, rCode: Int): json.JValue = {
-    val jsonAST = json.parse(rBody).transform {
+  def getJsonAST( rBody : String ) : json.JValue = {
+    json.parse(rBody).transform {
       //converts json camel_case field names to Scala camelCase field names
       case json.JField(fieldName, x) => json.JField(CamelCaseRegex.replaceAllIn(
         fieldName, (m: Regex.Match) => m.matched.substring(1).toUpperCase), x)
     }
+  }
+
+  def interpretResponse(rBody: String, rCode: Int): json.JValue = {
+    val jsonAST = getJsonAST( rBody )
     if (rCode < 200 || rCode >= 300) handleAPIError(rBody, rCode, jsonAST)
     jsonAST
   }
+
+  //we need to go from scalaCamel to internet_camel
+  val ReverseCamelCaseRegex = new Regex("[A-Z]")
+  def undoCamel( camel : String ) : String = {
+    ReverseCamelCaseRegex.replaceAllIn( camel, (m:Regex.Match) => {
+      "_" + m.matched.charAt(0).toLower
+    })
+  }
+
+  //this function will take a case class and any nested case classes and turn them into
+  //a map of maps.  This is useful for our parameterization of REST calls for sending into a query string
+  def makeParams( cc : AnyRef ) : Map[String,Any] = {
+
+    //System.out.println( "cc : : " + cc.toString() )
+
+    (Map[String, Any]() /: cc.getClass.getDeclaredFields) { (a, f) =>
+      f.setAccessible(true)
+      f.get(cc) match {
+        case Some( v : AnyRef ) => {
+          if (v.getClass.getInterfaces.find(_ == classOf[scala.Product]) != None) {
+            //System.out.println( "Match Some(v : AnyRef)(case): " + f.getName() + " : " + v.toString() )
+            a + (undoCamel(f.getName) -> makeParams(v))
+          }
+          else {
+            //System.out.println( "Match Some(v : AnyRef)(non-case): " + f.getName() + " : " + v.toString() )
+            a + (undoCamel(f.getName) -> v)
+          }
+        }
+        case Some(v) => {
+          //System.out.println( "Match Some(v): " + f.getName() + " : " + v.toString() )
+          a + (undoCamel(f.getName) -> v)
+        }
+        case None => a
+        case v => {
+          //System.out.println( "Match v: " + f.getName() + " : " + v.toString() )
+          a + (undoCamel(f.getName) -> v)
+        }
+      }
+    }
+  }
+
+  def toJson = {
+    json.Serialization.write( this )
+  }
+
+
 
   def handleAPIError(rBody: String, rCode: Int, jsonAST: json.JValue) {
     val error = try {
@@ -170,40 +214,51 @@ abstract class APIResource {
 case class ErrorContainer(error: Error)
 case class Error(`type`: String, message: String, code: Option[String], param: Option[String])
 
-case class CardCollection(count: Int, data: List[Card])
+case class CardCollection(
+  `object` : String,
+  totalCount : Int,
+  hasMore : Boolean,
+  url : String,
+  data : List[Card]
+  )
+
+case class SubscriptionCollection(
+                           `object` : String,
+                           totalCount : Int,
+                           hasMore : Boolean,
+                           url : String,
+                           data : List[Subscription]
+                           )
 
 case class Card(
-  id: String,
-  last4: String,
-  `type`: String,
-  expMonth: Int,
-  expYear: Int,
-  fingerprint: String,
-  country: Option[String],
+  last4: Option[String] = None,
+  `object`: Option[String] = None,
+  expMonth: Option[Int] = None,
+  expYear: Option[Int] = None,
+  fingerprint: Option[String] = None,
+  id: Option[String] = None,
+  brand: Option[String] = None,
+  funding: Option[String] = None,
+  country: Option[String] = None,
   name: Option[String] = None,
+  number: Option[String] = None,
+  cvc: Option[String] = None,
+  customer: Option[String] = None,
   addressLine1: Option[String] = None,
+  addressLine1_check: Option[String] = None,
   addressLine2: Option[String] = None,
   addressZip: Option[String] = None,
   addressState: Option[String] = None,
+  addressCity: Option[String] = None,
   addressCountry: Option[String] = None,
   cvcCheck: Option[String] = None,
-  addressLine1Check: Option[String] = None,
+  dynamicLast4: Option[String] = None,
+  recipient: Option[String] = None,
   addressZipCheck: Option[String] = None) extends APIResource
 
-case class Dispute(
-  livemode: Boolean,
-  amount: Int,
-  balanceTransaction: String,
-  charge: String,
-  created: Long,
-  currency: String,
-  reason: String,
-  status: String,
-  evidence: String,
-  evidenceDueBy: Long
-)
-
 case class Charge(
+  `object` : String,
+  status : String,
   created: Long,
   id: String,
   livemode: Boolean,
@@ -211,20 +266,24 @@ case class Charge(
   amount: Int,
   currency: String,
   refunded: Boolean,
-  card: Card,
-  balanceTransaction: String,
-  dispute: Option[Dispute],
+  captured : Boolean,
+  dispute : Option[Object],
+  source : Option[Card] = None,
+  balanceTransaction: Option[String],
   failureMessage: Option[String],
+  failureCode : Option[String],
+  receiptEmail : Option[String],
+  receiptNumber : Option[String],
+  applicationFee : Option[String],
+  destination : Option[String],
+  fraudDetails : Option[Object],
+  shipping : Option[Object],
   amountRefunded: Option[Int],
   customer: Option[String],
   invoice: Option[String],
+                 metadata : Option[Map[String,Object]],
   description: Option[String]) extends APIResource {
-
   def refund(): Charge = request("POST", "%s/refund".format(instanceURL(this.id))).extract[Charge]
-  def updateDispute(params: Map[String, _]): Dispute =
-    request("POST", s"${instanceURL(id)}/dispute", params).extract[Dispute]
-  def closeDispute(): Dispute =
-    request("POST", s"${instanceURL(id)}/dispute/close").extract[Dispute]
 }
 
 case class ChargeCollection(count: Int, data: List[Charge])
@@ -244,46 +303,53 @@ object Charge extends APIResource {
 
 }
 
-case class SubscriptionCollection(count: Int, data: List[Subscription])
-
 case class Customer(
-  created: Long,
-  id: String,
-  livemode: Boolean,
-  description: Option[String],
-  cards: CardCollection,
-  defaultCard: Option[String],
-  email: Option[String],
-  delinquent: Option[Boolean],
-  subscriptions: SubscriptionCollection,
-  discount: Option[Discount],
-  accountBalance: Option[Int]) extends APIResource {
+  created: Option[Long] = None,
+  id: Option[String] = None,
+  livemode: Option[Boolean] = None,
+  `object`: Option[String] = None,
+  description: Option[String] = None,
+  currency: Option[String] = None,
+  sources: Option[CardCollection] = None,
+  source: Option[Card] = None,
+  subscriptions : Option[SubscriptionCollection] = None,
+  defaultSource: Option[String] = None,
+  email : Option[String] = None,
+  metadata : Option[Map[String,Any]] = None,
+  plan : Option[String] = None,
+  quantity: Option[String] = None,
+  delinquent: Option[Boolean] = None,
+  subscription: Option[Subscription] = None,
+  discount: Option[String] = None,
+  accountBalance: Option[Int] = None ) extends APIResource {
   def update(params: Map[String,_]): Customer = {
-    request("POST", instanceURL(this.id), params).extract[Customer]
+    request("POST", instanceURL(this.id.get), params).extract[Customer]
   }
 
   def delete(): DeletedCustomer = {
-    request("DELETE", instanceURL(this.id)).extract[DeletedCustomer]
+    request("DELETE", instanceURL(this.id.get)).extract[DeletedCustomer]
   }
 
-  def createSubscription(params: Map[String,_]): Subscription = {
-    request("POST", s"${instanceURL(id)}/subscriptions", params).extract[Subscription]
+  def updateSubscription(params: Map[String,_]): Subscription = {
+    request("POST", "%s/subscription".format(instanceURL(id.get)), params).extract[Subscription]
   }
 
-  def updateSubscription(subscriptionId: String, params: Map[String, _]): Subscription = {
-    request("POST", s"${instanceURL(id)}/subscriptions/$subscriptionId", params).extract[Subscription]
-  }
-
-  def cancelSubscription(subscriptionId: String, params: Map[String,_] = Map.empty): Subscription = {
-    request("DELETE", s"${instanceURL(id)}/subscriptions/$subscriptionId", params).extract[Subscription]
+  def cancelSubscription(params: Map[String,_] = Map.empty): Subscription = {
+    request("DELETE", "%s/subscription".format(instanceURL(id.get)), params).extract[Subscription]
   }
 }
 
 case class DeletedCustomer(id: String, deleted: Boolean)
 
-case class CustomerCollection(count: Int, data: List[Customer])
+case class CustomerCollection(
+                           `object` : String,
+                           hasMore : Boolean,
+                           url : String,
+                           data : List[Customer]
+                           )
 
 object Customer extends APIResource {
+
   def create(params: Map[String,_]): Customer = {
     request("POST", classURL, params).extract[Customer]
   }
@@ -333,7 +399,6 @@ object Plan extends APIResource {
 }
 
 case class Subscription(
-  id: String,
   plan: Plan,
   start: Long,
   status: String,
@@ -350,35 +415,48 @@ case class Subscription(
 case class NextRecurringCharge(amount: Int, date: String)
 
 case class Discount(
-  id: String,
+  `object`: String,
   coupon: String,
   start: Long,
+  subcription: Long,
   customer: String,
   end: Option[Long]) extends APIResource {
 }
 
 case class InvoiceItem(
-  id: String,
-  amount: Int,
-  currency: String,
-  date: Long,
-  livemode: Boolean,
+  id: Option[String],
+  `object`: Option[String],
+  amount: Option[Int],
+  date: Option[Long],
+  livemode: Option[Boolean],
+  currency : Option[String],
+  customer : Option[String],
+  discountable : Option[Boolean],
+  proration : Option[Boolean],
+  metadata : Option[Map[String,Any]],
+  period : Option[String],
+  plan : Option[String],
+  quantity : Option[Int],
+  subscription : Option[String],
   description: Option[String],
-  invoice: Option[Invoice]) extends APIResource {
+  invoice: Option[String]
+ ) extends APIResource
+{
   def update(params: Map[String,_]): InvoiceItem = {
-    request("POST", instanceURL(this.id), params).extract[InvoiceItem]
+    request("POST", instanceURL(this.id.get), params).extract[InvoiceItem]
   }
 
   def delete(): DeletedInvoiceItem = {
-    request("DELETE", instanceURL(this.id)).extract[DeletedInvoiceItem]
+    request("DELETE", instanceURL(this.id.get)).extract[DeletedInvoiceItem]
   }
 }
 
 case class DeletedInvoiceItem(id: String, deleted: Boolean)
 
-case class InvoiceItemCollection(count: Int, data: List[InvoiceItem])
+case class InvoiceItemCollection(`object` : String, total_count: Int, data: List[InvoiceItem], has_more : Boolean, url : String )
 
-object InvoiceItem extends APIResource {
+object InvoiceItem extends APIResource
+{
   def create(params: Map[String,_]): InvoiceItem = {
     request("POST", classURL, params).extract[InvoiceItem]
   }
@@ -393,44 +471,48 @@ object InvoiceItem extends APIResource {
 }
 
 case class InvoiceLineSubscriptionPeriod(start: Long, end: Long)
-case class InvoiceLine(
-  id: String,
-  livemode: Boolean,
-  amount: Long,
-  currency: String,
-  proration: Boolean,
-  period: InvoiceLineSubscriptionPeriod,
-  quantity: Option[Int],
-  plan: Option[Plan],
-  description: Option[String]) extends APIResource
-case class InvoiceLinesCollection(data: List[InvoiceLine], count: Int)
+case class InvoiceLineSubscription(plan: Plan, amount: Int, period: InvoiceLineSubscriptionPeriod)
 
 case class Invoice(
-  date: Long,
+  date: Option[Long],
   // id is optional since UpcomingInvoices don't have an ID.
   id: Option[String],
-  periodStart: Long,
-  periodEnd: Long,
-  lines: InvoiceLinesCollection,
-  subtotal: Int,
-  total: Int,
-  customer: String,
-  attempted: Boolean,
-  closed: Boolean,
-  paid: Boolean,
-  livemode: Boolean,
-  attemptCount: Int,
-  amountDue: Int,
-  startingBalance: Int,
+  application_fee: Option[Int],
+  statementDescriptor: Option[String],
+  subscription: Option[String],
+  taxPercent: Option[BigDecimal],
+  periodStart: Option[Long],
+  periodEnd: Option[Long],
+  lines: Option[InvoiceItemCollection],
+  subtotal: Option[Int],
+  total: Option[Int],
+  customer: Option[String],
+  attempted: Option[Boolean],
+  closed: Option[Boolean],
+  paid: Option[Boolean],
+  forgiven: Option[Boolean],
+  livemode: Option[Boolean],
+  attemptCount: Option[Int],
+  amountDue: Option[Int],
+  currency: Option[String],
+  startingBalance: Option[Int],
   endingBalance: Option[Int],
   nextPaymentAttempt: Option[Long],
   charge: Option[String],
-  discount: Option[Discount]) {
+  discount: Option[Discount]
+) {
 }
 
 case class InvoiceCollection(count: Int, data: List[Invoice])
 
 object Invoice extends APIResource {
+
+  def create( body : String): Invoice = {
+    val invoice = getJsonAST( body )
+    val params = makeParams( invoice )
+    request("POST", classURL, params).extract[Invoice]
+  }
+
   def retrieve(id: String): Invoice = {
     request("GET", instanceURL(id)).extract[Invoice]
   }
@@ -467,7 +549,6 @@ case class Coupon(
   percentOff: Int,
   livemode: Boolean,
   duration: String,
-  valid: Boolean,
   redeemBy: Option[Long],
   maxRedemptions: Option[Int],
   timesRedeemed: Option[Int],
